@@ -1,0 +1,9 @@
+# Core dependencies
+Pillow>=10.0.0          # Image processing
+opencv-python>=4.8.0    # Video processing
+numpy>=1.24.0           # Array operations
+imageio[ffmpeg]>=2.31.0 # WebM/VP9 encoding
+imageio-ffmpeg>=0.4.9   # FFmpeg bindings
+
+# Optional dependencies (for background removal)
+rembg>=2.0.50           # AI-based background removal

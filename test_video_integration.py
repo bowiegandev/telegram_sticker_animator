@@ -204,7 +204,11 @@ def test_image_processor_integration():
         
         # Test video creation with processed frames
         creator = TelegramWebMCreator()
-        output_path = "test_integration_video.webm"
+        
+        # Create output directory
+        output_dir = Path("output")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "test_integration_video.webm"
         
         success = creator.create_video(
             processed_frames,
@@ -238,7 +242,11 @@ def test_file_size_optimization():
         test_frames.append(frame)
     
     creator = TelegramWebMCreator()
-    output_path = "test_optimization.webm"
+    
+    # Create output directory
+    output_dir = Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "test_optimization.webm"
     
     try:
         # Mock the optimization by testing the strategy logic
@@ -302,7 +310,10 @@ def test_standalone_functions():
     for frame in test_frames:
         frame[:, :, 3] = 255
     
-    output_path = "test_standalone.webm"
+    # Create output directory
+    output_dir = Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "test_standalone.webm"
     
     try:
         # Test create_telegram_video function
@@ -383,7 +394,9 @@ def test_complete_pipeline():
             assert frame.dtype == np.uint8
         
         # Step 2: Create video
-        output_path = "pipeline_test_video.webm"
+        output_dir = Path("output")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "pipeline_test_video.webm"
         success = create_telegram_video(
             processed_frames,
             output_path,

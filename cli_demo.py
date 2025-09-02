@@ -126,7 +126,14 @@ def main():
                 print("   ℹ️  Background removal disabled")
         
         # Save result
-        output_path = args.output if args.output else f"processed_{input_path.name}"
+        if args.output:
+            output_path = args.output
+        else:
+            # Default to output folder
+            output_dir = Path("output")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / f"processed_{input_path.name}"
+        
         processed_image.save(output_path, format='PNG')
         
         print(f"✅ Saved result to: {output_path}")

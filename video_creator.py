@@ -535,7 +535,11 @@ if __name__ == "__main__":
         
         # Test TelegramWebMCreator
         creator = TelegramWebMCreator()
-        output_path = "test_output.webm"
+        
+        # Create output directory
+        output_dir = Path("output")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "test_output.webm"
         
         success = creator.create_video(
             test_frames, 

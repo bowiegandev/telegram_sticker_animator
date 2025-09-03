@@ -21,6 +21,15 @@ from config import (
     get_config
 )
 
+# Import advanced features
+try:
+    from interpolation_engine import interpolate_frame_sequence
+    from transition_engine import apply_transitions_to_sequence
+    ADVANCED_FEATURES_AVAILABLE = True
+except ImportError as e:
+    logging.getLogger(__name__).warning(f"Advanced features not available: {e}")
+    ADVANCED_FEATURES_AVAILABLE = False
+
 
 class VideoCreator:
     """
@@ -311,9 +320,10 @@ class WebMCreator(VideoCreator):
 
 class TelegramWebMCreator(WebMCreator):
     """
-    WebM creator optimized for Telegram's specific requirements.
+    Advanced WebM creator optimized for Telegram's specific requirements.
     
-    Handles automatic file size optimization to meet 256KB limit.
+    Handles automatic file size optimization and supports advanced features
+    including frame interpolation, transitions, and preset animation modes.
     """
     
     MAX_FILE_SIZE = TELEGRAM_MAX_FILE_SIZE
@@ -327,9 +337,249 @@ class TelegramWebMCreator(WebMCreator):
         'tiny': {'crf': 50, 'cpu-used': 4, 'quality': 1}
     }
     
-    def __init__(self):
-        """Initialize TelegramWebMCreator with default settings."""
+    # Advanced animation presets
+    ANIMATION_PRESETS = {
+        'cinematic': {
+            'fps': 24,
+            'duration_per_frame': 0.4,
+            'quality': 9,
+            'interpolation': 'cubic',
+            'interp_frames': 2,
+            'transition': 'crossfade',
+            'transition_duration': 0.5,
+            'motion_blur': 0.3
+        },
+        'smooth': {
+            'fps': 30,
+            'duration_per_frame': 0.2,
+            'quality': 8,
+            'interpolation': 'cubic',
+            'interp_frames': 3,
+            'transition': 'crossfade',
+            'transition_duration': 0.3,
+            'motion_blur': 0.1
+        },
+        'slideshow': {
+            'fps': 30,
+            'duration_per_frame': 0.8,
+            'quality': 9,
+            'interpolation': 'linear',
+            'interp_frames': 1,
+            'transition': 'fade',
+            'transition_duration': 0.4,
+            'motion_blur': 0.0
+        },
+        'dynamic': {
+            'fps': 25,
+            'duration_per_frame': 0.3,
+            'quality': 7,
+            'interpolation': 'motion',
+            'interp_frames': 2,
+            'transition': 'scale',
+            'transition_duration': 0.3,
+            'motion_blur': 0.2
+        }
+    }
+    
+    def __init__(self, preset: Optional[str] = None):
+        """
+        Initialize TelegramWebMCreator with optional preset.
+        
+        Args:
+            preset: Animation preset ('cinematic', 'smooth', 'slideshow', 'dynamic')
+        """
         super().__init__(fps=TELEGRAM_RECOMMENDED_FPS, quality=8)
+        
+        # Advanced feature settings
+        self.use_interpolation = False
+        self.interpolation_type = 'linear'
+        self.interpolation_frames = 2
+        self.use_transitions = False
+        self.transition_type = 'crossfade'
+        self.transition_duration = 0.3
+        self.transition_kwargs = {}
+        self.motion_blur_intensity = 0.0
+        
+        # Rotation animation settings
+        self.use_rotation = False
+        self.rotation_direction = 'clockwise'
+        self.rotation_duration = 2.0  # seconds for full 360° rotation
+        self.rotation_steps = 36  # 10-degree increments for smooth rotation
+        
+        # Apply preset if specified
+        if preset and preset in self.ANIMATION_PRESETS:
+            self.apply_preset(preset)
+    
+    def apply_preset(self, preset_name: str):
+        """
+        Apply animation preset settings.
+        
+        Args:
+            preset_name: Name of preset to apply
+        """
+        if preset_name not in self.ANIMATION_PRESETS:
+            self.logger.warning(f"Unknown preset '{preset_name}', using default settings")
+            return
+        
+        preset = self.ANIMATION_PRESETS[preset_name]
+        
+        # Basic settings
+        self.fps = preset['fps']
+        self.duration_per_frame = preset['duration_per_frame']
+        self.quality = preset['quality']
+        
+        # Advanced features
+        if ADVANCED_FEATURES_AVAILABLE:
+            self.use_interpolation = preset.get('interp_frames', 0) > 0
+            self.interpolation_type = preset.get('interpolation', 'linear')
+            self.interpolation_frames = preset.get('interp_frames', 2)
+            
+            self.use_transitions = bool(preset.get('transition'))
+            self.transition_type = preset.get('transition', 'crossfade')
+            self.transition_duration = preset.get('transition_duration', 0.3)
+            
+            # Set transition-specific parameters
+            if preset.get('transition') == 'scale':
+                self.transition_kwargs = {'scale_type': 'zoom_in'}
+            elif preset.get('transition') == 'slide':
+                self.transition_kwargs = {'direction': 'left'}
+            
+            self.motion_blur_intensity = preset.get('motion_blur', 0.0)
+            
+            self.logger.info(f"Applied '{preset_name}' preset with advanced features")
+        else:
+            self.logger.info(f"Applied '{preset_name}' preset (basic features only)")
+    
+    def enable_interpolation(self, interpolation_type: str = 'cubic', num_frames: int = 2):
+        """
+        Enable frame interpolation.
+        
+        Args:
+            interpolation_type: Type of interpolation ('linear', 'cubic', 'motion')
+            num_frames: Number of intermediate frames to generate
+        """
+        if not ADVANCED_FEATURES_AVAILABLE:
+            self.logger.warning("Advanced features not available, interpolation disabled")
+            return
+        
+        self.use_interpolation = True
+        self.interpolation_type = interpolation_type
+        self.interpolation_frames = num_frames
+        self.logger.info(f"Enabled {interpolation_type} interpolation with {num_frames} intermediate frames")
+    
+    def enable_transitions(self, transition_type: str = 'crossfade', duration: float = 0.3, **kwargs):
+        """
+        Enable transition effects.
+        
+        Args:
+            transition_type: Type of transition ('fade', 'crossfade', 'slide', 'scale')
+            duration: Duration of transitions in seconds
+            **kwargs: Transition-specific parameters
+        """
+        if not ADVANCED_FEATURES_AVAILABLE:
+            self.logger.warning("Advanced features not available, transitions disabled")
+            return
+        
+        self.use_transitions = True
+        self.transition_type = transition_type
+        self.transition_duration = duration
+        self.transition_kwargs = kwargs
+        self.logger.info(f"Enabled {transition_type} transitions with {duration}s duration")
+    
+    def set_motion_blur(self, intensity: float):
+        """
+        Set motion blur intensity.
+        
+        Args:
+            intensity: Motion blur intensity (0.0 to 1.0)
+        """
+        self.motion_blur_intensity = max(0.0, min(1.0, intensity))
+        self.logger.info(f"Set motion blur intensity to {self.motion_blur_intensity}")
+    
+    def enable_rotation(self, direction: str = 'clockwise', duration: float = 2.0, steps: int = 36):
+        """
+        Enable 360-degree rotation animation.
+        
+        Args:
+            direction: Rotation direction ('clockwise' or 'counterclockwise')
+            duration: Duration for full 360-degree rotation in seconds
+            steps: Number of rotation steps (higher = smoother rotation)
+        """
+        self.use_rotation = True
+        self.rotation_direction = direction.lower()
+        self.rotation_duration = duration
+        self.rotation_steps = max(12, min(72, steps))  # Limit steps for reasonable file size
+        
+        if self.rotation_direction not in ['clockwise', 'counterclockwise']:
+            self.logger.warning(f"Invalid rotation direction '{direction}', defaulting to 'clockwise'")
+            self.rotation_direction = 'clockwise'
+        
+        self.logger.info(
+            f"Enabled {self.rotation_direction} rotation: {duration}s duration, {self.rotation_steps} steps"
+        )
+    
+    def _generate_rotation_frames(self, image: np.ndarray) -> List[np.ndarray]:
+        """
+        Generate rotation frames from a single image.
+        
+        Args:
+            image: Source image as RGBA numpy array (512x512x4)
+            
+        Returns:
+            List of rotated frames for 360-degree animation
+        """
+        if not self.use_rotation:
+            return [image]
+        
+        rotation_frames = []
+        angle_step = 360.0 / self.rotation_steps
+        
+        # Convert numpy array to PIL Image for rotation
+        pil_image = Image.fromarray(image, mode='RGBA')
+        
+        self.logger.info(f"Generating {self.rotation_steps} rotation frames...")
+        
+        for i in range(self.rotation_steps):
+            # Calculate rotation angle
+            if self.rotation_direction == 'clockwise':
+                angle = i * angle_step
+            else:  # counterclockwise
+                angle = -i * angle_step
+            
+            # Rotate image with high-quality resampling
+            # Use expand=False to maintain 512x512 dimensions
+            # fillcolor=(0,0,0,0) for transparent background
+            try:
+                # Try modern PIL resampling constant
+                rotated_pil = pil_image.rotate(
+                    angle,
+                    resample=Image.Resampling.LANCZOS,
+                    expand=False,
+                    fillcolor=(0, 0, 0, 0)
+                )
+            except AttributeError:
+                # Fallback for older PIL versions
+                rotated_pil = pil_image.rotate(
+                    angle,
+                    resample=Image.LANCZOS,
+                    expand=False,
+                    fillcolor=(0, 0, 0, 0)
+                )
+            except ValueError:
+                # If LANCZOS not available, use BICUBIC as fallback
+                rotated_pil = pil_image.rotate(
+                    angle,
+                    resample=Image.Resampling.BICUBIC if hasattr(Image, 'Resampling') else Image.BICUBIC,
+                    expand=False,
+                    fillcolor=(0, 0, 0, 0)
+                )
+            
+            # Convert back to numpy array
+            rotated_frame = np.array(rotated_pil)
+            rotation_frames.append(rotated_frame)
+        
+        self.logger.info(f"Generated {len(rotation_frames)} rotation frames")
+        return rotation_frames
     
     def create_video(self, 
                     images: List[np.ndarray],
@@ -337,7 +587,7 @@ class TelegramWebMCreator(WebMCreator):
                     fps: int = 30,
                     duration_per_frame: float = 0.1) -> bool:
         """
-        Create video with automatic size optimization for Telegram.
+        Create advanced video with interpolation, transitions, and optimization.
         
         Args:
             images: List of RGBA numpy arrays from ImageProcessor
@@ -351,8 +601,11 @@ class TelegramWebMCreator(WebMCreator):
         self.fps = fps
         self.duration_per_frame = duration_per_frame
         
+        # Apply advanced features to frames
+        processed_frames = self._apply_advanced_features(images)
+        
         # Try creating video with size optimization
-        success = self.optimize_for_size(images, output_path)
+        success = self.optimize_for_size_advanced(processed_frames, output_path)
         
         if success:
             file_size = Path(output_path).stat().st_size
@@ -370,6 +623,225 @@ class TelegramWebMCreator(WebMCreator):
                 )
                 return False
         
+        return False
+    
+    def _apply_advanced_features(self, frames: List[np.ndarray]) -> List[np.ndarray]:
+        """
+        Apply advanced features like interpolation and transitions to frames.
+        
+        Args:
+            frames: Source frames
+            
+        Returns:
+            Processed frames with advanced features applied
+        """
+        processed_frames = frames.copy()
+        
+        # Apply rotation animation (generate rotation frames from single image)
+        if self.use_rotation:
+            if len(frames) == 1:
+                self.logger.info(f"Generating 360° rotation animation from single image...")
+                rotation_frames = self._generate_rotation_frames(frames[0])
+                processed_frames = rotation_frames
+                # Update duration to match rotation duration
+                self.duration_per_frame = self.rotation_duration / len(rotation_frames)
+                self.logger.info(f"Rotation complete: 1 image -> {len(rotation_frames)} rotation frames")
+            else:
+                self.logger.warning("Rotation animation works best with single images. Using first image only.")
+                rotation_frames = self._generate_rotation_frames(frames[0])
+                processed_frames = rotation_frames
+                self.duration_per_frame = self.rotation_duration / len(rotation_frames)
+        
+        # Apply frame interpolation
+        if self.use_interpolation and ADVANCED_FEATURES_AVAILABLE:
+            self.logger.info(f"Applying {self.interpolation_type} interpolation...")
+            processed_frames = interpolate_frame_sequence(
+                processed_frames,
+                self.interpolation_type,
+                self.interpolation_frames
+            )
+            self.logger.info(f"Interpolation complete: {len(frames)} -> {len(processed_frames)} frames")
+        
+        # Apply transitions
+        if self.use_transitions and ADVANCED_FEATURES_AVAILABLE:
+            self.logger.info(f"Applying {self.transition_type} transitions...")
+            processed_frames = apply_transitions_to_sequence(
+                processed_frames,
+                self.transition_type,
+                self.transition_duration,
+                self.fps,
+                **self.transition_kwargs
+            )
+            self.logger.info(f"Transitions complete: {len(processed_frames)} final frames")
+        
+        # Apply motion blur if enabled
+        if self.motion_blur_intensity > 0:
+            processed_frames = self._apply_motion_blur(processed_frames)
+        
+        return processed_frames
+    
+    def _apply_motion_blur(self, frames: List[np.ndarray]) -> List[np.ndarray]:
+        """
+        Apply motion blur to frames for smoother animation.
+        
+        Args:
+            frames: Input frames
+            
+        Returns:
+            Frames with motion blur applied
+        """
+        if self.motion_blur_intensity == 0 or len(frames) < 2:
+            return frames
+        
+        try:
+            import cv2
+            
+            blurred_frames = []
+            kernel_size = max(3, int(self.motion_blur_intensity * 15))
+            
+            # Ensure kernel size is odd
+            if kernel_size % 2 == 0:
+                kernel_size += 1
+            
+            self.logger.info(f"Applying motion blur with kernel size {kernel_size}")
+            
+            for i, frame in enumerate(frames):
+                if i == 0 or i == len(frames) - 1:
+                    # Don't blur first and last frames
+                    blurred_frames.append(frame)
+                else:
+                    # Apply horizontal motion blur
+                    kernel = np.zeros((kernel_size, kernel_size))
+                    kernel[kernel_size//2, :] = 1 / kernel_size
+                    
+                    # Apply to RGB channels only
+                    rgb_frame = frame[:, :, :3]
+                    alpha_frame = frame[:, :, 3]
+                    
+                    blurred_rgb = cv2.filter2D(rgb_frame, -1, kernel)
+                    
+                    # Reconstruct RGBA frame
+                    blurred_frame = np.dstack([blurred_rgb, alpha_frame])
+                    blurred_frames.append(blurred_frame.astype(np.uint8))
+            
+            return blurred_frames
+            
+        except ImportError:
+            self.logger.warning("OpenCV not available, skipping motion blur")
+            return frames
+        except Exception as e:
+            self.logger.error(f"Motion blur failed: {e}")
+            return frames
+    
+    def optimize_for_size_advanced(self, frames: List[np.ndarray], 
+                                 output_path: str,
+                                 max_size: int = None) -> bool:
+        """
+        Advanced optimization considering the impact of advanced features.
+        
+        Args:
+            frames: Processed frames with advanced features
+            output_path: Output file path
+            max_size: Maximum file size in bytes
+            
+        Returns:
+            True if optimization successful
+        """
+        if max_size is None:
+            max_size = self.MAX_FILE_SIZE
+        
+        # Advanced features may create many more frames, so use more aggressive strategies
+        strategies = [
+            {'quality': 8, 'fps': self.fps},
+            {'quality': 6, 'fps': self.fps},
+            {'quality': 5, 'fps': max(15, int(self.fps * 0.8))},
+            {'quality': 4, 'fps': max(12, int(self.fps * 0.6))},
+            {'quality': 3, 'fps': max(10, int(self.fps * 0.5))},
+            {'quality': 2, 'fps': max(8, int(self.fps * 0.4))},
+            {'quality': 1, 'fps': max(6, int(self.fps * 0.3))}
+        ]
+        
+        original_use_interpolation = self.use_interpolation
+        original_use_transitions = self.use_transitions
+        
+        for i, strategy in enumerate(strategies):
+            self.logger.info(
+                f"Advanced optimization strategy {i+1}/{len(strategies)}: "
+                f"quality={strategy['quality']}, fps={strategy['fps']}"
+            )
+            
+            # Update settings
+            self.fps = strategy['fps']
+            self.quality = strategy['quality']
+            
+            # For very aggressive strategies, disable advanced features
+            if strategy['quality'] <= 3:
+                current_frames = self._apply_basic_processing(frames)
+            else:
+                current_frames = frames
+            
+            # Create video with current settings
+            success = self.create_animation(current_frames, output_path, self.duration_per_frame)
+            
+            if not success:
+                self.logger.error(f"Failed with strategy {i+1}")
+                continue
+            
+            # Check file size
+            if not Path(output_path).exists():
+                continue
+            
+            file_size = Path(output_path).stat().st_size
+            self.logger.info(f"File size: {file_size} bytes ({file_size/1024:.1f} KB)")
+            
+            if file_size <= max_size:
+                self.logger.info(f"Optimization successful with strategy {i+1}")
+                return True
+        
+        # Restore original settings
+        self.use_interpolation = original_use_interpolation
+        self.use_transitions = original_use_transitions
+        
+        # Last resort: frame reduction
+        return self._try_frame_reduction_advanced(frames, output_path, max_size)
+    
+    def _apply_basic_processing(self, frames: List[np.ndarray]) -> List[np.ndarray]:
+        """
+        Apply only basic processing, skipping advanced features for size optimization.
+        """
+        # Skip interpolation and transitions for size optimization
+        # Just apply basic frame repetition based on duration_per_frame
+        return frames
+    
+    def _try_frame_reduction_advanced(self, frames: List[np.ndarray], 
+                                    output_path: str, max_size: int) -> bool:
+        """
+        Advanced frame reduction strategy.
+        """
+        # Try different reduction ratios
+        reduction_ratios = [2, 3, 4, 6, 8]
+        
+        for ratio in reduction_ratios:
+            reduced_frames = frames[::ratio]
+            
+            if len(reduced_frames) < 2:
+                continue
+            
+            self.logger.info(f"Trying frame reduction by {ratio}: {len(frames)} -> {len(reduced_frames)}")
+            
+            # Use minimal settings
+            self.fps = max(8, int(self.fps / 2))
+            self.quality = 1
+            
+            success = self.create_animation(reduced_frames, output_path, self.duration_per_frame)
+            
+            if success and Path(output_path).exists():
+                file_size = Path(output_path).stat().st_size
+                if file_size <= max_size:
+                    self.logger.info(f"Frame reduction successful: {file_size} bytes")
+                    return True
+        
+        self.logger.error("All frame reduction strategies failed")
         return False
     
     def optimize_for_size(self, frames: List[np.ndarray], 

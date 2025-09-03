@@ -8,6 +8,7 @@ processing functionality as specified in the requirements document.
 import argparse
 import glob
 import logging
+import re
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -64,6 +65,33 @@ class CLIHandler:
         """Initialize the CLI handler with argument parser."""
         self.parser = self.create_parser()
         self.logger = logging.getLogger(__name__)
+    
+    def _natural_sort_key(self, filepath: str) -> List:
+        """
+        Generate natural sorting key for filenames containing numbers.
+        
+        Converts 'frame10.jpg' to ['frame', 10, '.jpg'] so that:
+        - frame1.jpg comes before frame2.jpg 
+        - frame2.jpg comes before frame10.jpg
+        
+        Args:
+            filepath: File path to generate key for
+            
+        Returns:
+            List of alternating strings and integers for natural sorting
+        """
+        # Split filename into text and numeric parts
+        parts = re.split(r'(\d+)', filepath)
+        
+        # Convert numeric parts to integers, keep text parts as strings
+        key = []
+        for part in parts:
+            if part.isdigit():
+                key.append(int(part))
+            else:
+                key.append(part.lower())  # Case-insensitive text comparison
+        
+        return key
     
     def create_parser(self) -> argparse.ArgumentParser:
         """
@@ -149,6 +177,56 @@ Constraints:
                           choices=range(1, 11),
                           default=DEFAULTS['quality'],
                           help=f'Output quality 1-10 (default: {DEFAULTS["quality"]})')
+        
+        # Advanced features
+        parser.add_argument('--preset',
+                          choices=['cinematic', 'smooth', 'slideshow', 'dynamic'],
+                          help='Animation preset with predefined settings')
+        
+        # Interpolation settings
+        parser.add_argument('--interpolate',
+                          choices=['linear', 'cubic', 'motion'],
+                          help='Enable frame interpolation for smoother animation')
+        parser.add_argument('--interp-frames',
+                          type=int,
+                          default=2,
+                          help='Number of intermediate frames for interpolation (default: 2)')
+        
+        # Transition settings  
+        parser.add_argument('--transition',
+                          choices=['fade', 'crossfade', 'slide', 'scale'],
+                          help='Enable transition effects between frames')
+        parser.add_argument('--transition-duration',
+                          type=float,
+                          default=0.3,
+                          help='Duration of transitions in seconds (default: 0.3)')
+        parser.add_argument('--slide-direction',
+                          choices=['left', 'right', 'up', 'down'],
+                          default='left',
+                          help='Direction for slide transitions (default: left)')
+        parser.add_argument('--scale-type',
+                          choices=['zoom_in', 'zoom_out', 'zoom_in_out'],
+                          default='zoom_in',
+                          help='Type of scale transition (default: zoom_in)')
+        
+        # Motion blur
+        parser.add_argument('--motion-blur',
+                          type=float,
+                          default=0.0,
+                          help='Motion blur intensity 0.0-1.0 (default: 0.0)')
+        
+        # Rotation animation
+        parser.add_argument('--rotation',
+                          choices=['clockwise', 'counterclockwise'],
+                          help='Enable 360-degree rotation animation')
+        parser.add_argument('--rotation-duration',
+                          type=float,
+                          default=2.0,
+                          help='Duration for full 360-degree rotation in seconds (default: 2.0)')
+        parser.add_argument('--rotation-steps',
+                          type=int,
+                          default=36,
+                          help='Number of rotation steps for smoothness (default: 36)')
         
         # Advanced options
         parser.add_argument('--bg-model',
@@ -279,14 +357,14 @@ Constraints:
         - Accept single image file
         - Accept directory of images
         - Accept wildcard patterns (*.jpg)
-        - Sort images alphabetically
+        - Sort images naturally (handles numeric sequences correctly)
         - Validate file extensions
         
         Args:
             input_path: Input path string
             
         Returns:
-            Sorted list of valid image file paths
+            Naturally sorted list of valid image file paths
         """
         paths = []
         
@@ -311,9 +389,9 @@ Constraints:
             if self._is_valid_image_extension(input_path):
                 paths.append(input_path)
         
-        # Remove duplicates and sort alphabetically
+        # Remove duplicates and sort using natural sorting (handles numeric sequences)
         unique_paths = list(set(paths))
-        unique_paths.sort()
+        unique_paths.sort(key=self._natural_sort_key)
         
         return unique_paths
     
@@ -333,30 +411,170 @@ Constraints:
     
     def get_validation_summary(self, args: argparse.Namespace) -> Dict[str, Any]:
         """
-        Get a summary of validation results for reporting.
+        Get a comprehensive summary of validation results for reporting.
         
         Args:
             args: Parsed arguments
             
         Returns:
-            Dictionary with validation information
+            Dictionary with validation information including advanced features
         """
         image_paths = self.process_input_path(args.input)
-        total_duration = len(image_paths) * args.duration
+        base_duration = len(image_paths) * args.duration
+        
+        # Calculate estimated frames including advanced features
+        estimated_frames = len(image_paths) * int(args.fps * args.duration)
+        
+        # Adjust for interpolation
+        if hasattr(args, 'interpolate') and args.interpolate:
+            interp_frames = getattr(args, 'interp_frames', 2)
+            estimated_frames = len(image_paths) * (1 + interp_frames) * int(args.fps * args.duration)
+        
+        # Adjust for transitions
+        if hasattr(args, 'transition') and args.transition:
+            transition_duration = getattr(args, 'transition_duration', 0.3)
+            transition_frames = (len(image_paths) - 1) * int(args.fps * transition_duration)
+            estimated_frames += transition_frames
+        
+        # Calculate estimated total duration
+        total_duration = estimated_frames / args.fps if estimated_frames > 0 else base_duration
         
         return {
             'input_path': args.input,
             'output_path': args.output,
             'image_count': len(image_paths),
             'image_paths': image_paths,
+            'base_duration': base_duration,
             'total_duration': total_duration,
             'fps': args.fps,
             'quality': args.quality,
             'remove_bg': args.remove_bg,
             'bg_model': args.bg_model,
             'within_duration_limit': total_duration <= MAX_TOTAL_DURATION,
-            'estimated_frames': len(image_paths) * int(args.fps * args.duration)
+            'estimated_frames': estimated_frames,
+            
+            # Advanced features summary
+            'preset': getattr(args, 'preset', None),
+            'interpolation': {
+                'enabled': hasattr(args, 'interpolate') and args.interpolate is not None,
+                'type': getattr(args, 'interpolate', None),
+                'frames': getattr(args, 'interp_frames', 2)
+            },
+            'transitions': {
+                'enabled': hasattr(args, 'transition') and args.transition is not None,
+                'type': getattr(args, 'transition', None),
+                'duration': getattr(args, 'transition_duration', 0.3),
+                'slide_direction': getattr(args, 'slide_direction', 'left'),
+                'scale_type': getattr(args, 'scale_type', 'zoom_in')
+            },
+            'motion_blur': getattr(args, 'motion_blur', 0.0),
+            
+            # Feature impact warnings
+            'warnings': self._get_feature_warnings(args, total_duration, estimated_frames)
         }
+    
+    def _get_feature_warnings(self, args: argparse.Namespace, 
+                            total_duration: float, 
+                            estimated_frames: int) -> List[str]:
+        """
+        Generate warnings about potential issues with advanced features.
+        
+        Args:
+            args: Parsed arguments
+            total_duration: Estimated total duration
+            estimated_frames: Estimated total frames
+            
+        Returns:
+            List of warning messages
+        """
+        warnings = []
+        
+        # Duration warnings
+        if total_duration > MAX_TOTAL_DURATION:
+            warnings.append(f"Total duration ({total_duration:.2f}s) exceeds Telegram limit ({MAX_TOTAL_DURATION}s)")
+        elif total_duration > MAX_TOTAL_DURATION * 0.8:
+            warnings.append(f"Total duration ({total_duration:.2f}s) is close to Telegram limit")
+        
+        # Frame count warnings
+        if estimated_frames > 200:
+            warnings.append(f"High frame count ({estimated_frames}) may result in large file size")
+        
+        # Advanced feature warnings
+        if hasattr(args, 'interpolate') and args.interpolate == 'motion':
+            warnings.append("Motion interpolation requires OpenCV and may be slower")
+        
+        if hasattr(args, 'transition') and args.transition and hasattr(args, 'interpolate') and args.interpolate:
+            warnings.append("Combining interpolation and transitions may significantly increase file size")
+        
+        if getattr(args, 'motion_blur', 0) > 0.5:
+            warnings.append("High motion blur intensity may reduce animation quality")
+        
+        # Quality vs features warnings
+        if args.quality >= 8 and (
+            (hasattr(args, 'interpolate') and args.interpolate) or 
+            (hasattr(args, 'transition') and args.transition)
+        ):
+            warnings.append("High quality + advanced features may exceed file size limit")
+        
+        return warnings
+    
+    def get_advanced_config(self, args: argparse.Namespace) -> Dict[str, Any]:
+        """
+        Extract advanced feature configuration for video creator.
+        
+        Args:
+            args: Parsed arguments
+            
+        Returns:
+            Configuration dictionary for TelegramWebMCreator
+        """
+        config = {
+            'basic': {
+                'fps': args.fps,
+                'duration_per_frame': args.duration,
+                'quality': args.quality
+            }
+        }
+        
+        # Preset configuration
+        if hasattr(args, 'preset') and args.preset:
+            config['preset'] = args.preset
+        
+        # Interpolation configuration
+        if hasattr(args, 'interpolate') and args.interpolate:
+            config['interpolation'] = {
+                'type': args.interpolate,
+                'frames': getattr(args, 'interp_frames', 2)
+            }
+        
+        # Transition configuration
+        if hasattr(args, 'transition') and args.transition:
+            transition_config = {
+                'type': args.transition,
+                'duration': getattr(args, 'transition_duration', 0.3)
+            }
+            
+            # Add transition-specific parameters
+            if args.transition == 'slide':
+                transition_config['direction'] = getattr(args, 'slide_direction', 'left')
+            elif args.transition == 'scale':
+                transition_config['scale_type'] = getattr(args, 'scale_type', 'zoom_in')
+            
+            config['transitions'] = transition_config
+        
+        # Motion blur configuration
+        if hasattr(args, 'motion_blur') and args.motion_blur > 0:
+            config['motion_blur'] = args.motion_blur
+        
+        # Rotation configuration
+        if hasattr(args, 'rotation') and args.rotation:
+            config['rotation'] = {
+                'direction': args.rotation,
+                'duration': getattr(args, 'rotation_duration', 2.0),
+                'steps': getattr(args, 'rotation_steps', 36)
+            }
+        
+        return config
 
 
 def create_cli_handler() -> CLIHandler:

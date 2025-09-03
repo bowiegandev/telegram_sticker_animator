@@ -17,6 +17,7 @@ from typing import List, Optional, Dict, Any
 from image_processor import ImageProcessor
 from background_remover import BackgroundRemover
 from video_creator import TelegramWebMCreator
+from cli_handler import CLIHandler
 from config import (
     IMAGE_FORMATS,
     REMBG_MODELS,
@@ -27,268 +28,6 @@ from config import (
     ERROR_MESSAGES,
     get_config
 )
-
-
-class CLIHandler:
-    """
-    Command-line interface handler for Telegram animator script.
-    
-    Provides flexible input/output options and configuration parameters
-    as specified in the requirements.
-    """
-    
-    def __init__(self):
-        self.parser = self.create_parser()
-        self.logger = logging.getLogger(__name__)
-    
-    def create_parser(self) -> argparse.ArgumentParser:
-        """
-        Setup command-line argument parser with:
-        - Positional arguments for input/output
-        - Optional flags for configuration
-        - Help documentation
-        """
-        parser = argparse.ArgumentParser(
-            prog='telegram_animator',
-            description='Convert JPG/JPEG images to WebM animations for Telegram stickers',
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog=f"""
-Examples:
-  # Basic usage with single image
-  python telegram_animator.py image.jpg output.webm
-
-  # Process directory of images
-  python telegram_animator.py ./images/ animation.webm
-
-  # Disable background removal
-  python telegram_animator.py images/ output.webm --no-remove-bg
-
-  # Custom animation settings
-  python telegram_animator.py images/ output.webv --fps 25 --duration 0.2
-
-  # Low quality for smaller file size
-  python telegram_animator.py images/ output.webm --quality 3
-
-  # Use specific background removal model
-  python telegram_animator.py person.jpg output.webm --bg-model u2net_human_seg
-
-  # Process with wildcard pattern
-  python telegram_animator.py "*.jpg" output.webm
-
-Background Removal Models:
-{chr(10).join(f'  {k}: {v}' for k, v in REMBG_MODELS.items())}
-
-Quality Levels (1-10):
-  1-3: Low quality, small file size
-  4-6: Balanced quality and size
-  7-8: High quality (default: 8)
-  9-10: Maximum quality, larger files
-            """
-        )
-        
-        # Positional arguments
-        parser.add_argument('input',
-                          help='Input image(s) - file, directory, or pattern')
-        parser.add_argument('output',
-                          help='Output WebM file path')
-        
-        # Background removal options
-        bg_group = parser.add_mutually_exclusive_group()
-        bg_group.add_argument('--remove-bg',
-                            action='store_true',
-                            default=True,
-                            help='Enable background removal (default)')
-        bg_group.add_argument('--no-remove-bg',
-                            dest='remove_bg',
-                            action='store_false',
-                            help='Disable background removal')
-        
-        # Animation settings
-        parser.add_argument('--fps',
-                          type=int,
-                          default=30,
-                          metavar='N',
-                          help='Frames per second (default: 30)')
-        parser.add_argument('--duration',
-                          type=float,
-                          default=0.1,
-                          metavar='SECONDS',
-                          help='Duration per image in seconds (default: 0.1)')
-        
-        # Quality settings
-        parser.add_argument('--quality',
-                          type=int,
-                          choices=range(1, 11),
-                          default=8,
-                          metavar='N',
-                          help='Output quality 1-10 (default: 8)')
-        
-        # Advanced options
-        parser.add_argument('--bg-model',
-                          default=DEFAULT_REMBG_MODEL,
-                          choices=list(REMBG_MODELS.keys()),
-                          help=f'Background removal model (default: {DEFAULT_REMBG_MODEL})')
-        
-        # Output options
-        parser.add_argument('--overwrite',
-                          action='store_true',
-                          help='Overwrite output file if it exists')
-        parser.add_argument('--verbose', '-v',
-                          action='store_true',
-                          help='Enable verbose output')
-        
-        return parser
-    
-    def parse_args(self, args: Optional[List[str]] = None) -> argparse.Namespace:
-        """Parse command-line arguments."""
-        return self.parser.parse_args(args)
-    
-    def validate_args(self, args: argparse.Namespace) -> bool:
-        """
-        Validate parsed arguments.
-        
-        Returns:
-            True if validation passes, False otherwise
-        """
-        # Check input exists
-        if not self._validate_input_path(args.input):
-            return False
-        
-        # Check output directory is writable
-        if not self._validate_output_path(args.output, args.overwrite):
-            return False
-        
-        # Validate numeric ranges
-        if not self._validate_numeric_args(args):
-            return False
-        
-        # Get image paths for duration check
-        image_paths = self.get_image_paths(args.input)
-        if not image_paths:
-            print("❌ No valid images found")
-            return False
-        
-        # Check total duration < 3 seconds
-        total_duration = len(image_paths) * args.duration
-        if total_duration > TELEGRAM_MAX_DURATION:
-            print(f"❌ Total duration ({total_duration:.2f}s) exceeds Telegram limit ({TELEGRAM_MAX_DURATION}s)")
-            print(f"   Try reducing --duration or number of images")
-            return False
-        
-        return True
-    
-    def _validate_input_path(self, input_path: str) -> bool:
-        """Validate input path exists and is accessible."""
-        path = Path(input_path)
-        
-        # Check if it's a wildcard pattern
-        if '*' in input_path or '?' in input_path:
-            matches = glob.glob(input_path)
-            if not matches:
-                print(f"❌ No files found matching pattern: {input_path}")
-                return False
-            return True
-        
-        # Check if path exists
-        if not path.exists():
-            print(f"❌ Input path not found: {input_path}")
-            return False
-        
-        return True
-    
-    def _validate_output_path(self, output_path: str, overwrite: bool) -> bool:
-        """Validate output path and handle overwrite logic."""
-        path = Path(output_path)
-        
-        # Check output extension
-        if path.suffix.lower() != '.webm':
-            print(f"❌ Output file must have .webm extension, got: {path.suffix}")
-            return False
-        
-        # Check if output directory exists and is writable
-        output_dir = path.parent
-        if not output_dir.exists():
-            try:
-                output_dir.mkdir(parents=True, exist_ok=True)
-            except PermissionError:
-                print(f"❌ Cannot create output directory: {output_dir}")
-                return False
-        
-        # Check if output file exists
-        if path.exists() and not overwrite:
-            print(f"⚠️  Output file exists: {output_path}")
-            response = input("Overwrite? (y/n): ").strip().lower()
-            if response not in ['y', 'yes']:
-                print("Operation cancelled")
-                return False
-        
-        return True
-    
-    def _validate_numeric_args(self, args: argparse.Namespace) -> bool:
-        """Validate numeric argument ranges."""
-        # Validate FPS
-        if not (10 <= args.fps <= 60):
-            print(f"❌ FPS must be between 10 and 60, got: {args.fps}")
-            return False
-        
-        # Validate duration per frame
-        if not (0.033 <= args.duration <= 1.0):
-            print(f"❌ Duration must be between 0.033 and 1.0 seconds, got: {args.duration}")
-            return False
-        
-        # Quality is already validated by argparse choices
-        
-        return True
-    
-    def get_image_paths(self, input_path: str) -> List[str]:
-        """
-        Get sorted list of image paths from input.
-        
-        - Accept single image file
-        - Accept directory of images  
-        - Accept wildcard patterns (*.jpg)
-        - Sort images alphabetically
-        - Validate file extensions
-        """
-        paths = []
-        
-        # Handle wildcard patterns
-        if '*' in input_path or '?' in input_path:
-            matches = glob.glob(input_path)
-            for match in matches:
-                if self._is_valid_image_file(match):
-                    paths.append(match)
-        
-        # Handle directory
-        elif Path(input_path).is_dir():
-            directory = Path(input_path)
-            for ext in IMAGE_FORMATS:
-                # Check both lowercase and uppercase extensions
-                for pattern in [f"*{ext}", f"*{ext.upper()}"]:
-                    paths.extend(str(p) for p in directory.glob(pattern))
-        
-        # Handle single file
-        elif Path(input_path).is_file():
-            if self._is_valid_image_file(input_path):
-                paths.append(input_path)
-        
-        # Remove duplicates and sort alphabetically
-        unique_paths = list(set(paths))
-        unique_paths.sort()
-        
-        return unique_paths
-    
-    def _is_valid_image_file(self, filepath: str) -> bool:
-        """Check if file has valid image extension."""
-        path = Path(filepath)
-        return path.suffix.lower() in IMAGE_FORMATS
-    
-    def process_input_path(self, input_path: str) -> List[str]:
-        """
-        Process input path and return list of valid image files.
-        This is an alias for get_image_paths for compatibility with requirements.
-        """
-        return self.get_image_paths(input_path)
 
 
 def setup_logging(verbose: bool = False):
@@ -341,6 +80,35 @@ def main():
         img_processor = ImageProcessor()
         bg_remover = BackgroundRemover(enabled=args.remove_bg, model=args.bg_model)
         video_creator = TelegramWebMCreator()
+        
+        # Configure advanced features if available
+        if hasattr(args, 'interpolate') and args.interpolate:
+            print(f"🎭 Enabling {args.interpolate} interpolation with {getattr(args, 'interp_frames', 2)} intermediate frames")
+            video_creator.enable_interpolation(args.interpolate, getattr(args, 'interp_frames', 2))
+        
+        if hasattr(args, 'transition') and args.transition:
+            transition_duration = getattr(args, 'transition_duration', 0.3)
+            print(f"🔄 Enabling {args.transition} transitions with {transition_duration}s duration")
+            
+            # Get transition-specific parameters
+            transition_kwargs = {}
+            if args.transition == 'slide':
+                transition_kwargs['direction'] = getattr(args, 'slide_direction', 'left')
+            elif args.transition == 'scale':
+                transition_kwargs['scale_type'] = getattr(args, 'scale_type', 'zoom_in')
+            
+            video_creator.enable_transitions(args.transition, transition_duration, **transition_kwargs)
+        
+        if hasattr(args, 'motion_blur') and getattr(args, 'motion_blur', 0) > 0:
+            print(f"💫 Enabling motion blur with intensity {args.motion_blur}")
+            video_creator.set_motion_blur(args.motion_blur)
+        
+        # Configure rotation animation
+        if hasattr(args, 'rotation') and args.rotation:
+            rotation_duration = getattr(args, 'rotation_duration', 2.0)
+            rotation_steps = getattr(args, 'rotation_steps', 36)
+            print(f"🔄 Enabling {args.rotation} rotation: {rotation_duration}s duration, {rotation_steps} steps")
+            video_creator.enable_rotation(args.rotation, rotation_duration, rotation_steps)
         
         if args.verbose:
             bg_info = bg_remover.get_model_info()
